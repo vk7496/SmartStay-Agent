@@ -1,71 +1,75 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 
 # تنظیمات صفحه
-st.set_page_config(page_title="مدیریت هوشمند هاستل", layout="wide")
+st.set_page_config(page_title="SmartStay-Agent", layout="wide")
 
-# ۱. مقداردهی اولیه دیتابیس در حافظه (Session State)
-if 'rooms' not in st.session_state:
-    st.session_state.rooms = pd.DataFrame({
-        'شعبه': ['تهران', 'اصفهان', 'گیلان'],
-        'ظرفیت خالی': [5, 2, 8],
-        'قیمت (تومان)': [500000, 450000, 600000]
-    })
+# مقداردهی اولیه دیتابیس (در حافظه - بعداً با SQL یا Google Sheets جایگزین کن)
+if 'reservations' not in st.session_state:
+    st.session_state.reservations = []
 
-if 'logs' not in st.session_state:
-    st.session_state.logs = []
+# --- توابع کمکی ---
+def add_reservation(data):
+    data["تاریخ ثبت"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    data["وضعیت"] = "در انتظار تایید"
+    st.session_state.reservations.append(data)
 
-# ۲. تابع شبیه‌ساز هوش مصنوعی (اینجا در آینده Ollama قرار می‌گیرد)
-def mock_ai_processor(text):
-    text = text.lower()
-    if "اصفهان" in text:
-        return "اصفهان"
-    elif "تهران" in text:
-        return "تهران"
-    elif "گیلان" in text:
-        return "گیلان"
-    return None
+# --- طراحی تب‌ها ---
+tab1, tab2 = st.tabs(["🏠 ثبت رزرو مسافر", "🔒 پنل مدیریت هاستل"])
 
-# ۳. طراحی UI
-st.title("🏨 پنل مدیریت هوشمند هاستل")
-st.markdown("---")
-
-col1, col2 = st.columns([1, 1])
-
-# بخش چت (سمت چپ)
-with col1:
-    st.subheader("💬 هوش مصنوعی (دریافت رزرو)")
-    user_input = st.text_input("پیام مسافر را وارد کنید:", placeholder="مثال: یه اتاق برای اصفهان میخوام")
-    
-    if st.button("پردازش درخواست"):
-        branch = mock_ai_processor(user_input)
-        if branch:
-            # منطق کاهش ظرفیت
-            idx = st.session_state.rooms.index[st.session_state.rooms['شعبه'] == branch][0]
-            if st.session_state.rooms.loc[idx, 'ظرفیت خالی'] > 0:
-                st.session_state.rooms.loc[idx, 'ظرفیت خالی'] -= 1
-                st.session_state.logs.append(f"رزرو برای شعبه {branch} ثبت شد.")
-                st.success(f"رزرو در شعبه {branch} با موفقیت انجام شد!")
+# --- تب ۱: مسافر ---
+with tab1:
+    st.header("سامانه رزرو هوشمند SmartStay")
+    with st.form("guest_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input("نام و نام خانوادگی")
+            phone = st.text_input("شماره تماس")
+        with col2:
+            location = st.selectbox("شعبه مورد نظر", ["تهران", "اصفهان", "گیلان"])
+            nights = st.number_input("تعداد شب", min_value=1, max_value=30)
+        
+        submitted = st.form_submit_button("ثبت درخواست رزرو")
+        if submitted:
+            if name and phone:
+                add_reservation({"نام": name, "تلفن": phone, "مکان": location, "شب": nights})
+                st.success("درخواست شما با موفقیت ثبت شد. به‌زودی با شما تماس می‌گیریم.")
             else:
-                st.error("ظرفیت تکمیل است!")
-        else:
-            st.warning("لطفاً نام شعبه (تهران، اصفهان، گیلان) را واضح‌تر بنویسید.")
+                st.error("لطفاً تمامی فیلدها را پر کنید.")
 
-# بخش داشبورد (سمت راست)
-with col2:
-    st.subheader("📊 وضعیت لحظه‌ای شعب")
-    st.table(st.session_state.rooms)
+# --- تب ۲: مدیریت ---
+with tab2:
+    # احراز هویت ساده
+    password = st.text_input("رمز عبور مدیریت", type="password")
     
-    st.subheader("📝 تاریخچه رزروها")
-    for log in st.session_state.logs:
-        st.write(f"✅ {log}")
-
-# دکمه ریست برای دمو
-if st.sidebar.button("ریست دمو"):
-    st.session_state.rooms = pd.DataFrame({
-        'شعبه': ['تهران', 'اصفهان', 'گیلان'],
-        'ظرفیت خالی': [5, 2, 8],
-        'قیمت (تومان)': [500000, 450000, 600000]
-    })
-    st.session_state.logs = []
-    st.rerun()
+    if password == "1234": # رمز عبور دمو
+        st.subheader("لیست رزروها")
+        
+        if st.session_state.reservations:
+            df = pd.DataFrame(st.session_state.reservations)
+            st.dataframe(df, use_container_width=True)
+            
+            # بخش عملیات مدیریت
+            st.markdown("---")
+            st.subheader("عملیات مدیریتی")
+            
+            # نمایش لیست برای تغییر وضعیت
+            for i, res in enumerate(st.session_state.reservations):
+                if res["وضعیت"] == "در انتظار تایید":
+                    if st.button(f"✅ تایید و ارسال شماره کارت برای {res['نام']}", key=f"btn1_{i}"):
+                        st.session_state.reservations[i]["وضعیت"] = "کارت ارسال شد"
+                        st.rerun()
+                elif res["وضعیت"] == "کارت ارسال شد":
+                    if st.button(f"💰 تایید واریز وجه برای {res['نام']}", key=f"btn2_{i}"):
+                        st.session_state.reservations[i]["وضعیت"] = "پرداخت شده"
+                        st.rerun()
+            
+            # خروجی اکسل
+            st.markdown("---")
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 دانلود گزارش نهایی (CSV)", csv, "reservations.csv", "text/csv")
+        else:
+            st.info("هنوز رزروی ثبت نشده است.")
+    else:
+        st.warning("لطفاً رمز عبور را برای مشاهده پنل وارد کنید.")

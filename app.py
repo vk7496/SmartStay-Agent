@@ -4,6 +4,7 @@ import re
 import os
 from datetime import date, timedelta
 from src.database import init_db, add_reservation, get_all_reservations, update_status
+from src.sheets_sync import append_to_sheet
 
 # ─── راه‌اندازی ───────────────────────────────────────────────────────────────
 init_db()
@@ -22,7 +23,6 @@ st.markdown("""
 
 * { font-family: 'Vazirmatn', sans-serif !important; direction: rtl; }
 
-/* هدر اصلی */
 .main-header {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
     color: white;
@@ -34,21 +34,10 @@ st.markdown("""
 .main-header h1 { font-size: 2rem; margin: 0; letter-spacing: -0.5px; }
 .main-header p  { font-size: 0.9rem; opacity: 0.7; margin: 0.4rem 0 0; }
 
-/* کارت فرم */
-.form-card {
-    background: white;
-    border: 1px solid #e8eaf0;
-    border-radius: 14px;
-    padding: 2rem;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
-}
-
-/* بج وضعیت */
 .badge-pending  { background:#fff3cd; color:#856404; border-radius:20px; padding:3px 10px; font-size:0.78rem; }
 .badge-sent     { background:#cff4fc; color:#055160; border-radius:20px; padding:3px 10px; font-size:0.78rem; }
 .badge-paid     { background:#d1e7dd; color:#0a3622; border-radius:20px; padding:3px 10px; font-size:0.78rem; }
 
-/* دکمه اصلی */
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg, #0f3460, #533483) !important;
     border: none !important;
@@ -58,7 +47,6 @@ st.markdown("""
     width: 100% !important;
 }
 
-/* مخفی کردن هدر پیش‌فرض streamlit */
 #MainMenu, footer, header { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
@@ -81,14 +69,12 @@ with tab1:
     with st.form("guest_form", clear_on_submit=True):
         st.subheader("اطلاعات رزرو")
 
-        # ردیف ۱
         c1, c2 = st.columns([2, 1])
         with c1:
             name = st.text_input("نام و نام خانوادگی *", placeholder="مثال: علی رضایی")
         with c2:
             phone = st.text_input("شماره تماس *", placeholder="09xxxxxxxxx")
 
-        # ردیف ۲
         c3, c4, c5 = st.columns(3)
         with c3:
             location = st.selectbox("شعبه مورد نظر", ["تهران", "اصفهان", "گیلان"])
@@ -97,7 +83,6 @@ with tab1:
         with c5:
             nights = st.number_input("تعداد شب", min_value=1, max_value=30, step=1, value=1)
 
-        # نوع اتاق
         room_type = st.radio(
             "نوع اتاق",
             ["تخت دورمیتوری (مشترک)", "اتاق دو نفره (خصوصی)", "اتاق یک نفره"],
@@ -124,6 +109,15 @@ with tab1:
                 name.strip(), phone.strip(), location, int(nights),
                 checkin=checkin, room_type=room_type, notes=notes,
             )
+            append_to_sheet({
+                "name": name.strip(),
+                "phone": phone.strip(),
+                "location": location,
+                "nights": int(nights),
+                "checkin": checkin,
+                "room_type": room_type,
+                "status": "در انتظار تایید",
+            })
             st.success(f"✅ رزرو شما برای **{name.strip()}** در شعبه **{location}** ثبت شد.")
             st.info(f"📅 تاریخ ورود: {checkin}  |  خروج: {checkout}  |  {nights} شب")
             st.caption("پس از بررسی، کارت پرداخت برای شما ارسال می‌شود.")
@@ -132,8 +126,7 @@ with tab1:
 # تب ۲ — پنل مدیریت
 # ══════════════════════════════════════════════════
 with tab2:
-    # رمز از Environment Variable (امن‌تر) یا fallback
-    ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "smartstay2025")
+    ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", st.secrets.get("ADMIN_PASSWORD", "smartstay2025"))
 
     pwd_col, _ = st.columns([1, 2])
     with pwd_col:
@@ -178,7 +171,23 @@ with tab2:
             if filter_status != "همه" and "status" in df.columns:
                 filtered = filtered[filtered["status"] == filter_status]
 
-            st.dataframe(filtered, use_container_width=True, height=280)
+            # ─── جدول با ستون‌های فارسی ──────────────────────
+            cols = ["name", "phone", "location", "nights", "checkin", "room_type", "status", "created_at"]
+            cols = [c for c in cols if c in filtered.columns]
+            st.dataframe(
+                filtered[cols].rename(columns={
+                    "name": "نام",
+                    "phone": "تلفن",
+                    "location": "شعبه",
+                    "nights": "شب",
+                    "checkin": "تاریخ ورود",
+                    "room_type": "نوع اتاق",
+                    "status": "وضعیت",
+                    "created_at": "ثبت شده",
+                }),
+                use_container_width=True,
+                height=280,
+            )
 
             # ─── تغییر وضعیت ─────────────────────────────────
             st.markdown("### مدیریت وضعیت رزروها")
@@ -211,8 +220,18 @@ with tab2:
 
             st.markdown("---")
 
-            # ─── دانلود ──────────────────────────────────────
-            csv = df.to_csv(index=False).encode("utf-8-sig")  # utf-8-sig برای اکسل فارسی
+            # ─── دانلود CSV ──────────────────────────────────
+            csv_df = df[cols].rename(columns={
+                "name": "نام",
+                "phone": "تلفن",
+                "location": "شعبه",
+                "nights": "شب",
+                "checkin": "تاریخ ورود",
+                "room_type": "نوع اتاق",
+                "status": "وضعیت",
+                "created_at": "ثبت شده",
+            })
+            csv = csv_df.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 "📥 دانلود گزارش CSV",
                 data=csv,
